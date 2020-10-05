@@ -6,9 +6,4 @@ public class PlayerCubeBehaviour : MonoBehaviour
 {
     [SerializeField]
     public string ID;
-
-    public void changeColour(NetworkMan.Player.receivedColor color)
-    {
-       
-    }
 }

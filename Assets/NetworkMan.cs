@@ -12,7 +12,7 @@ public class NetworkMan : MonoBehaviour
 {
     public UdpClient udp;
 
-    public GameObject playerPrefab;
+    public GameObject playerPrefab;  
     private List<GameObject> playerList;
 
     // List function to return a game object based on its id (returns null if failed to find it)
@@ -28,6 +28,13 @@ public class NetworkMan : MonoBehaviour
         return null;
     }
 
+    public class JsonMessage
+    {
+        public string messageType;
+        public Vector3 playerLocation;
+    }
+
+
     // Start is called before the first frame update
     void Start()
     {
@@ -37,14 +44,20 @@ public class NetworkMan : MonoBehaviour
 
         udp.Connect("localhost",12345);
 
-        Byte[] sendBytes = Encoding.ASCII.GetBytes("connect");
+        JsonMessage connect = new JsonMessage();
+        connect.messageType = "connect";
+
+        Byte[] sendBytes = Encoding.ASCII.GetBytes(JsonUtility.ToJson(connect));
       
         udp.Send(sendBytes, sendBytes.Length);
 
         udp.BeginReceive(new AsyncCallback(OnReceived), udp);
 
-        InvokeRepeating("HeartBeat", 1, 1);
+        InvokeRepeating("HeartBeat", 1, 0.03f);
+        
+       // Debug.Log("CLIENT ID: " + LocalIPAddress());
     }
+
 
     void OnDestroy(){
         udp.Dispose();
@@ -54,12 +67,19 @@ public class NetworkMan : MonoBehaviour
     public enum commands{
         NEW_CLIENT,
         UPDATE,
-        CLIENT_LEFT
+        CLIENT_LEFT,
+        GAIN_ID
     };
     
     [Serializable]
     public class Message{
         public commands cmd;
+    }
+
+    [Serializable]
+    public class UDPClient
+    {
+        public string ID;
     }
     
     [Serializable]
@@ -71,12 +91,14 @@ public class NetworkMan : MonoBehaviour
             public float G;
             public float B;
         }
-        public receivedColor color;        
+        public receivedColor color;
+        public Vector3 location;
     }
 
     [Serializable]
     public class NewPlayer{
         public string id;
+        public Vector3 spawnPoint;
     }
 
     [Serializable]
@@ -91,6 +113,7 @@ public class NetworkMan : MonoBehaviour
     }
 
     public Message latestMessage;
+    public UDPClient info;
     public GameState lastestGameState;
     public IO_Players incomingPlayers;
     public IO_Players outgoingPlayers;
@@ -123,6 +146,10 @@ public class NetworkMan : MonoBehaviour
                     outgoingPlayers = JsonUtility.FromJson<IO_Players>(returnData);
                     Debug.Log("Players Left: " + outgoingPlayers.players);
                     break;
+                case commands.GAIN_ID:
+                    info = JsonUtility.FromJson<UDPClient>(returnData);
+                    Debug.Log("Gain client ID: " + info.ID);
+                    break;
                 default:
                     Debug.Log("Error");
                     break;
@@ -142,22 +169,23 @@ public class NetworkMan : MonoBehaviour
         {
             foreach (NewPlayer player in incomingPlayers.players)
             {
-                // Get a new random spawn position for the cube
-                Vector3 spawnPoint = new Vector3(UnityEngine.Random.Range(-5, 5),
-                                                 UnityEngine.Random.Range(-5, 5),
-                                                 UnityEngine.Random.Range(0, 5));
-
                 // Create the newPlayer
-                GameObject newPlayer = Instantiate(playerPrefab, spawnPoint, Quaternion.identity);
+                GameObject newPlayer = Instantiate(playerPrefab, player.spawnPoint, Quaternion.identity);
                 // Set their ID tag
                 newPlayer.GetComponent<PlayerCubeBehaviour>().ID = player.id;
+                Debug.Log("playerList size: " + playerList.Count);
+                //Check if the new player is us (the client)
+                if (newPlayer.GetComponent<PlayerCubeBehaviour>().ID == info.ID)
+                {
+                    //Add in the movement component
+                    newPlayer.AddComponent<PlayerMovementBehaviour>();
+                }
                 // Add the new player to the list
                 playerList.Add(newPlayer);
-                Debug.Log("playerList size: " + playerList.Count);
 
-                incomingPlayers.players = null;
             }
-            
+            // Get rid of the playerlist
+            incomingPlayers.players = null;
         }
     }
 
@@ -171,6 +199,7 @@ public class NetworkMan : MonoBehaviour
             {
                 // Set its new colour
                 playerCube.GetComponent<MeshRenderer>().material.color = new Color(player.color.R, player.color.G, player.color.B);
+                playerCube.transform.position = player.location;
             }
         }
     }
@@ -194,14 +223,22 @@ public class NetworkMan : MonoBehaviour
                 }
             }
 
-            Array.Clear(outgoingPlayers.players, 0, outgoingPlayers.players.Length);
-
             outgoingPlayers.players = null;
         }
     }
     
     void HeartBeat(){
-        Byte[] sendBytes = Encoding.ASCII.GetBytes("heartbeat");
+        JsonMessage heartbeat = new JsonMessage();
+        heartbeat.messageType = "heartbeat";
+        // check if we have a connected personal cube in the scene
+        GameObject playerCube = findPlayerObject(info.ID);
+        // input the cube's location
+        if (playerCube != null)
+        {
+            heartbeat.playerLocation = playerCube.transform.position;
+        }
+        // send the info to the server
+        Byte[] sendBytes = Encoding.ASCII.GetBytes(JsonUtility.ToJson(heartbeat));
         udp.Send(sendBytes, sendBytes.Length);
     }
 
